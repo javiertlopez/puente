@@ -32,7 +32,8 @@ func (m *Middleware) Logging(next http.Handler) http.Handler {
 			wrapped := newResponseWriter(w)
 			next.ServeHTTP(wrapped, r)
 
-			log.WithFields(log.Fields{
+			m.logger.WithFields(log.Fields{
+				"app":         m.app,
 				"status":      wrapped.statusCode,
 				"method":      r.Method,
 				"path":        r.URL.EscapedPath(),
