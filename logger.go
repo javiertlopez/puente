@@ -33,12 +33,11 @@ func (m *Middleware) Logging(next http.Handler) http.Handler {
 			next.ServeHTTP(wrapped, r)
 
 			m.logger.WithFields(log.Fields{
-				"app":         m.app,
-				"status":      wrapped.statusCode,
-				"method":      r.Method,
-				"path":        r.URL.EscapedPath(),
-				"duration":    time.Since(start),
-				"x-origin-id": r.Header.Get("x-origin-id"),
+				"app":      m.app,
+				"status":   wrapped.statusCode,
+				"method":   r.Method,
+				"path":     r.URL.EscapedPath(),
+				"duration": time.Since(start),
 			}).Info()
 		},
 	)
