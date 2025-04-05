@@ -38,6 +38,7 @@ func (m *Middleware) Logging(next http.Handler) http.Handler {
 				"method":   r.Method,
 				"path":     r.URL.EscapedPath(),
 				"duration": time.Since(start),
+				"user_id":  r.Context().Value(userIDKey),
 			}).Info()
 		},
 	)
