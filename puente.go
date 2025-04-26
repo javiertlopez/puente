@@ -1,17 +1,21 @@
 package puente
 
-import "github.com/sirupsen/logrus"
+import (
+	"github.com/sirupsen/logrus"
+)
 
 // Middleware holds the app name and logger
 type Middleware struct {
-	app    string
-	logger *logrus.Logger
+	app       string
+	logger    *logrus.Logger
+	extractor JWTExtractor
 }
 
-// New returns a middleware instance
-func New(app string, logger *logrus.Logger) *Middleware {
+// New creates a new Middleware instance
+func New(app string, logger *logrus.Logger, extractor JWTExtractor) *Middleware {
 	return &Middleware{
-		app:    app,
-		logger: logger,
+		app:       app,
+		logger:    logger,
+		extractor: extractor,
 	}
 }

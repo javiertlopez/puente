@@ -32,13 +32,18 @@ func (m *Middleware) Logging(next http.Handler) http.Handler {
 			wrapped := newResponseWriter(w)
 			next.ServeHTTP(wrapped, r)
 
+			userId, ok := GetUserID(r.Context())
+			if !ok {
+				m.logger.Warn("Failed to get user ID from context")
+			}
+
 			m.logger.WithFields(log.Fields{
 				"app":      m.app,
 				"status":   wrapped.statusCode,
 				"method":   r.Method,
 				"path":     r.URL.EscapedPath(),
 				"duration": time.Since(start),
-				"user_id":  r.Context().Value(userIDKey),
+				"user_id":  userId,
 			}).Info()
 		},
 	)
