@@ -69,14 +69,17 @@ func TestResponseWriter(t *testing.T) {
 
 func TestLoggingMiddleware(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupContext   func() context.Context
-		setupHandler   func(http.ResponseWriter, *http.Request)
-		method         string
-		path           string
-		expectUserID   string
-		expectWarnLog  bool
-		expectedStatus int
+		name              string
+		setupContext      func() context.Context
+		setupHandler      func(http.ResponseWriter, *http.Request)
+		method            string
+		path              string
+		expectUserID      string
+		expectWarnLog     bool
+		expectedStatus    int
+		expectRequestID   bool
+		provideRequestID  bool
+		expectedRequestID string
 	}{
 		{
 			name: "successful request with user ID",
@@ -86,11 +89,14 @@ func TestLoggingMiddleware(t *testing.T) {
 			setupHandler: func(w http.ResponseWriter, r *http.Request) {
 				// Do nothing, return 200 OK
 			},
-			method:         "GET",
-			path:           "/test",
-			expectUserID:   "test-user",
-			expectWarnLog:  false,
-			expectedStatus: http.StatusOK,
+			method:            "GET",
+			path:              "/test",
+			expectUserID:      "test-user",
+			expectWarnLog:     false,
+			expectedStatus:    http.StatusOK,
+			expectRequestID:   true,
+			provideRequestID:  false,
+			expectedRequestID: "", // Generated automatically
 		},
 		{
 			name: "request without user ID",
@@ -100,11 +106,14 @@ func TestLoggingMiddleware(t *testing.T) {
 			setupHandler: func(w http.ResponseWriter, r *http.Request) {
 				// Do nothing, return 200 OK
 			},
-			method:         "POST",
-			path:           "/api/data",
-			expectUserID:   "",
-			expectWarnLog:  true,
-			expectedStatus: http.StatusOK,
+			method:            "POST",
+			path:              "/api/data",
+			expectUserID:      "",
+			expectWarnLog:     true,
+			expectedStatus:    http.StatusOK,
+			expectRequestID:   true,
+			provideRequestID:  false,
+			expectedRequestID: "", // Generated automatically
 		},
 		{
 			name: "request with error status code",
@@ -114,11 +123,32 @@ func TestLoggingMiddleware(t *testing.T) {
 			setupHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusBadRequest)
 			},
-			method:         "PUT",
-			path:           "/api/update",
-			expectUserID:   "error-user",
-			expectWarnLog:  false,
-			expectedStatus: http.StatusBadRequest,
+			method:            "PUT",
+			path:              "/api/update",
+			expectUserID:      "error-user",
+			expectWarnLog:     false,
+			expectedStatus:    http.StatusBadRequest,
+			expectRequestID:   true,
+			provideRequestID:  false,
+			expectedRequestID: "", // Generated automatically
+		},
+		{
+			name: "request with existing request ID",
+			setupContext: func() context.Context {
+				ctx := context.WithValue(context.Background(), UserIDKey, "request-id-user")
+				return context.WithValue(ctx, RequestIDKey, "existing-request-id")
+			},
+			setupHandler: func(w http.ResponseWriter, r *http.Request) {
+				// Do nothing, return 200 OK
+			},
+			method:            "GET",
+			path:              "/api/with-request-id",
+			expectUserID:      "request-id-user",
+			expectWarnLog:     false,
+			expectedStatus:    http.StatusOK,
+			expectRequestID:   true,
+			provideRequestID:  true,
+			expectedRequestID: "existing-request-id",
 		},
 	}
 
@@ -133,8 +163,21 @@ func TestLoggingMiddleware(t *testing.T) {
 				logger: logger,
 			}
 
-			// Create test handler
-			testHandler := http.HandlerFunc(tt.setupHandler)
+			// Create test handler with additional verification
+			testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Verify request ID propagation
+				if tt.expectRequestID {
+					requestID, ok := GetRequestID(r.Context())
+					if !ok {
+						t.Error("Expected request ID in context, but it was not present")
+					} else if tt.provideRequestID && requestID != tt.expectedRequestID {
+						t.Errorf("Expected request ID %s in context, got %s", tt.expectedRequestID, requestID)
+					}
+				}
+
+				// Execute the original test handler
+				tt.setupHandler(w, r)
+			})
 
 			// Apply middleware
 			handler := m.Logging(testHandler)
@@ -203,6 +246,16 @@ func TestLoggingMiddleware(t *testing.T) {
 					if _, exists := entry.Data["duration"]; !exists {
 						t.Error("Expected duration field but it was missing")
 					}
+
+					// Check request_id field
+					if tt.expectRequestID {
+						requestID, exists := entry.Data["request_id"]
+						if !exists {
+							t.Error("Expected request_id field in log entry but it was not present")
+						} else if tt.provideRequestID && requestID != tt.expectedRequestID {
+							t.Errorf("Expected request_id field to be '%s', got %v", tt.expectedRequestID, requestID)
+						}
+					}
 				}
 			}
 
@@ -211,6 +264,40 @@ func TestLoggingMiddleware(t *testing.T) {
 			}
 
 			hook.Reset()
+		})
+	}
+}
+
+func TestGetRequestID(t *testing.T) {
+	tests := []struct {
+		name          string
+		ctx           context.Context
+		wantRequestID string
+		wantPresent   bool
+	}{
+		{
+			name:          "request id exists",
+			ctx:           context.WithValue(context.Background(), RequestIDKey, "test-request-id"),
+			wantRequestID: "test-request-id",
+			wantPresent:   true,
+		},
+		{
+			name:          "request id does not exist",
+			ctx:           context.Background(),
+			wantRequestID: "",
+			wantPresent:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotRequestID, gotPresent := GetRequestID(tt.ctx)
+			if gotRequestID != tt.wantRequestID {
+				t.Errorf("GetRequestID() gotRequestID = %v, want %v", gotRequestID, tt.wantRequestID)
+			}
+			if gotPresent != tt.wantPresent {
+				t.Errorf("GetRequestID() gotPresent = %v, want %v", gotPresent, tt.wantPresent)
+			}
 		})
 	}
 }

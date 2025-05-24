@@ -11,6 +11,7 @@ Puente is a lightweight and flexible HTTP middleware package for Go that provide
 
 - 🔑 **JWT Authentication**: Extract and validate JWT claims from requests
 - 📋 **Logging**: Detailed request logging with user context
+- 🔍 **Request Tracking**: Unique request IDs for improved traceability
 - 🛠️ **Extensible**: Easy to integrate with any Go HTTP service
 
 ## Installation
@@ -59,6 +60,13 @@ func main() {
 func helloHandler(w http.ResponseWriter, r *http.Request) {
     // Get user ID from context (added by JWT middleware)
     userID, ok := puente.GetUserID(r.Context())
+    
+    // Get request ID from context
+    requestID, hasRequestID := puente.GetRequestID(r.Context())
+    if hasRequestID {
+        w.Header().Set("X-Request-ID", requestID)
+    }
+    
     if ok {
         w.Write([]byte("Hello, " + userID))
         return
@@ -102,7 +110,8 @@ func (e *MyJWTExtractor) ExtractJWT(r *http.Request) (puente.JWTClaims, error) {
 The JWT middleware:
 - Extracts JWT claims from requests using the provided extractor
 - Adds the user ID (`sub` claim) to the request context
-- Logs extraction success or failures
+- Generates or propagates a unique request ID for each request
+- Logs extraction success or failures with request ID for traceability
 - Passes through the request even if extraction fails (non-blocking)
 
 ### Logging Middleware
@@ -114,8 +123,19 @@ The logging middleware:
   - Response status code
   - Request duration
   - User ID (if available)
+  - Request ID for cross-component tracing
+- Generates new request IDs or uses existing ones from context
 - Logs warnings when user ID is not found in context
-- Uses structured logging via logrus
+- Uses structured logging via logrus with consistent field formatting
+
+### Request ID Tracking
+
+The request ID functionality:
+- Automatically generates a unique UUID for each request if not present
+- Propagates request IDs through all middleware components
+- Makes request IDs available in the context for your handlers
+- Includes request IDs in all log entries for easy request tracing
+- Provides helper function (`GetRequestID`) to retrieve request IDs from context
 
 ## Examples
 
@@ -128,6 +148,51 @@ handler := middleware.Logging(   // First executed (outer)
                yourHandler       // Finally, your handler
              )
            )
+```
+
+### Using Request IDs for Distributed Tracing
+
+```go
+func apiHandler(w http.ResponseWriter, r *http.Request) {
+    // Get the request ID from context
+    requestID, ok := puente.GetRequestID(r.Context())
+    if !ok {
+        // Should not happen if middleware is properly set up
+        requestID = uuid.New().String()
+    }
+    
+    // Include the request ID in response headers
+    w.Header().Set("X-Request-ID", requestID)
+    
+    // Use the request ID in your application logic
+    resp, err := callDownstreamService(r.Context(), requestID)
+    if err != nil {
+        // The error will be logged with request ID automatically
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+    
+    w.Write(resp)
+}
+
+// Example downstream service call with request ID propagation
+func callDownstreamService(ctx context.Context, requestID string) ([]byte, error) {
+    req, err := http.NewRequest("GET", "https://api.example.com/data", nil)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Propagate the request ID to downstream services
+    req.Header.Set("X-Request-ID", requestID)
+    
+    // Use context for request
+    req = req.WithContext(ctx)
+    
+    // Make the request...
+    // ...
+    
+    return responseData, nil
+}
 ```
 
 ### Custom Logger Configuration
@@ -156,6 +221,9 @@ When testing your application that uses Puente middleware, you can use the `logr
 
 ```go
 import (
+    "context"
+    "net/http"
+    "net/http/httptest"
     "testing"
     
     "github.com/sirupsen/logrus"
@@ -170,19 +238,93 @@ func TestMyHandler(t *testing.T) {
     // Create middleware with test logger
     middleware := puente.New("test-app", logger, myExtractor)
     
-    // Test your handler with middleware
-    // ...
+    // Create a test handler
+    testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Get request ID from context
+        requestID, ok := puente.GetRequestID(r.Context())
+        if !ok {
+            t.Error("Expected request ID in context, but none found")
+        }
+        
+        // Get user ID from context
+        userID, ok := puente.GetUserID(r.Context())
+        if !ok {
+            t.Error("Expected user ID in context, but none found")
+        }
+        
+        // Write user ID in response
+        w.Write([]byte(userID))
+    })
+    
+    // Apply middleware to your handler
+    handler := middleware.Logging(middleware.JWT(testHandler))
+    
+    // Create test request
+    req := httptest.NewRequest("GET", "/api/resource", nil)
+    // Optionally provide a request ID to simulate incoming request with ID
+    ctx := context.WithValue(req.Context(), puente.RequestIDKey, "test-request-id")
+    req = req.WithContext(ctx)
+    
+    // Record the response
+    recorder := httptest.NewRecorder()
+    
+    // Execute the handler
+    handler.ServeHTTP(recorder, req)
+    
+    // Verify status code
+    if recorder.Code != http.StatusOK {
+        t.Errorf("Expected status code %d, got %d", http.StatusOK, recorder.Code)
+    }
     
     // Verify logging behavior
     for _, entry := range hook.Entries {
         if entry.Level == logrus.InfoLevel {
             // Check log fields
-            userID := entry.Data["user_id"]
-            // ...assertions...
+            userID, exists := entry.Data["user_id"]
+            if !exists {
+                t.Error("Expected user_id field in log entry but it was not present")
+            }
+            
+            // Check request ID in logs
+            requestID, exists := entry.Data["request_id"]
+            if !exists {
+                t.Error("Expected request_id field in log entry but it was not present")
+            }
+            
+            if requestID != "test-request-id" {
+                t.Errorf("Expected request_id to be %s, got %v", "test-request-id", requestID)
+            }
         }
     }
 }
 ```
+
+## Best Practices
+
+### Request ID Management
+
+1. **Propagate Request IDs**: When making downstream service calls, include the request ID in headers (commonly as `X-Request-ID`)
+2. **Return Request IDs**: Include the request ID in API responses to help clients correlate their requests
+3. **Accept Incoming Request IDs**: If a client provides a request ID, use it instead of generating a new one
+4. **Log with Request IDs**: Always include the request ID in log entries for distributed tracing
+
+### Standardized Logging
+
+Puente ensures consistent logging across all middleware components by:
+
+1. **Common Base Fields**: All log entries include:
+   - `app`: The application name provided during middleware creation
+   - `timestamp`: UTC timestamp in RFC3339 format
+   - `request_id`: Unique identifier for request tracing
+   
+2. **Request-Specific Fields**: The logging middleware adds:
+   - `method`: HTTP method (GET, POST, etc.)
+   - `path`: Request path
+   - `status`: HTTP status code
+   - `duration`: Request processing duration
+   - `user_id`: User identifier (when available)
+
+This standardization makes logs easier to search, filter, and analyze across your distributed system.
 
 ## Contributing
 

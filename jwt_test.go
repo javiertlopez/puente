@@ -68,44 +68,78 @@ func TestGetUserID(t *testing.T) {
 
 func TestJWTMiddleware(t *testing.T) {
 	tests := []struct {
-		name            string
-		claims          JWTClaims
-		extractErr      error
-		expectWarnLog   bool
-		expectInfoLog   bool
-		expectUserID    string
-		expectUserInLog bool
+		name              string
+		claims            JWTClaims
+		extractErr        error
+		setupContext      func() context.Context
+		expectWarnLog     bool
+		expectInfoLog     bool
+		expectUserID      string
+		expectUserInLog   bool
+		expectRequestID   bool
+		checkRequestIDLog bool
 	}{
 		{
 			name: "successful extraction",
 			claims: JWTClaims{
 				Sub: "test-user",
 			},
-			extractErr:      nil,
-			expectWarnLog:   false,
-			expectInfoLog:   true,
-			expectUserID:    "test-user",
-			expectUserInLog: true,
+			setupContext: func() context.Context {
+				return context.Background() // No request ID in context
+			},
+			extractErr:        nil,
+			expectWarnLog:     false,
+			expectInfoLog:     true,
+			expectUserID:      "test-user",
+			expectUserInLog:   true,
+			expectRequestID:   true,
+			checkRequestIDLog: true,
 		},
 		{
-			name:            "extraction failure",
-			claims:          JWTClaims{},
-			extractErr:      errors.New("extraction failed"),
-			expectWarnLog:   true,
-			expectInfoLog:   false,
-			expectUserID:    "",
-			expectUserInLog: false,
+			name: "existing request ID in context",
+			claims: JWTClaims{
+				Sub: "context-user",
+			},
+			setupContext: func() context.Context {
+				return context.WithValue(context.Background(), RequestIDKey, "existing-request-id")
+			},
+			extractErr:        nil,
+			expectWarnLog:     false,
+			expectInfoLog:     true,
+			expectUserID:      "context-user",
+			expectUserInLog:   true,
+			expectRequestID:   true,
+			checkRequestIDLog: true,
+		},
+		{
+			name:       "extraction failure",
+			claims:     JWTClaims{},
+			extractErr: errors.New("extraction failed"),
+			setupContext: func() context.Context {
+				return context.Background()
+			},
+			expectWarnLog:     true,
+			expectInfoLog:     false,
+			expectUserID:      "",
+			expectUserInLog:   false,
+			expectRequestID:   false,
+			checkRequestIDLog: true,
 		},
 		{
 			name: "empty subject in claims",
 			claims: JWTClaims{
 				Sub: "",
 			},
-			extractErr:      nil,
-			expectWarnLog:   false,
-			expectInfoLog:   true,
-			expectUserID:    "",
-			expectUserInLog: true,
+			setupContext: func() context.Context {
+				return context.Background()
+			},
+			extractErr:        nil,
+			expectWarnLog:     false,
+			expectInfoLog:     true,
+			expectUserID:      "",
+			expectUserInLog:   true,
+			expectRequestID:   true,
+			checkRequestIDLog: true,
 		},
 	}
 
@@ -130,10 +164,21 @@ func TestJWTMiddleware(t *testing.T) {
 					if !ok || userID != tt.claims.Sub {
 						t.Errorf("Expected user ID %s in context, got %s", tt.claims.Sub, userID)
 					}
+
+					if tt.expectRequestID {
+						requestID, ok := GetRequestID(r.Context())
+						if !ok {
+							t.Error("Expected request ID in context, but it was not present")
+						} else if tt.setupContext().Value(RequestIDKey) != nil && requestID != tt.setupContext().Value(RequestIDKey).(string) {
+							t.Errorf("Expected request ID %s in context, got %s", tt.setupContext().Value(RequestIDKey).(string), requestID)
+						}
+					}
 				}
 			}))
 
 			req := httptest.NewRequest("GET", "/", nil)
+			// Apply the context from the test case
+			req = req.WithContext(tt.setupContext())
 			rr := httptest.NewRecorder()
 
 			handler.ServeHTTP(rr, req)
@@ -164,6 +209,13 @@ func TestJWTMiddleware(t *testing.T) {
 								}
 							} else {
 								t.Error("Expected user_id field in log entry but it was not present")
+							}
+						}
+
+						// Verify request ID in log fields
+						if tt.checkRequestIDLog {
+							if _, exists := entry.Data["request_id"]; !exists {
+								t.Error("Expected request_id field in log entry but it was not present")
 							}
 						}
 						break
