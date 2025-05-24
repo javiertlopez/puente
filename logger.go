@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 type responseWriter struct {
@@ -37,7 +37,7 @@ func (m *Middleware) Logging(next http.Handler) http.Handler {
 				m.logger.Warn("Failed to get user ID from context")
 			}
 
-			m.logger.WithFields(log.Fields{
+			m.logger.WithFields(logrus.Fields{
 				"app":      m.app,
 				"status":   wrapped.statusCode,
 				"method":   r.Method,
