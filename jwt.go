@@ -36,8 +36,8 @@ func GetUserID(ctx context.Context) (string, bool) {
 	return userID, ok
 }
 
-// JWTMiddleware is a middleware that extracts JWT claims from the request and adds the user ID to the context
-func (m *Middleware) JWTMiddleware(next http.Handler) http.Handler {
+// JWT is a middleware that extracts JWT claims from the request and adds the user ID to the context
+func (m *Middleware) JWT(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, err := m.extractor.ExtractJWT(r)
 		if err != nil {
