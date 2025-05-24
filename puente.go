@@ -1,8 +1,6 @@
 package puente
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 )
@@ -40,7 +38,6 @@ func generateRequestID() string {
 // defaultLogFields returns the default log fields for any log entry
 func (m *Middleware) defaultLogFields() logrus.Fields {
 	return logrus.Fields{
-		"app":       m.app,
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"app": m.app,
 	}
 }

@@ -314,7 +314,6 @@ Puente ensures consistent logging across all middleware components by:
 
 1. **Common Base Fields**: All log entries include:
    - `app`: The application name provided during middleware creation
-   - `timestamp`: UTC timestamp in RFC3339 format
    - `request_id`: Unique identifier for request tracing
    
 2. **Request-Specific Fields**: The logging middleware adds:
